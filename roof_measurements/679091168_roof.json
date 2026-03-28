@@ -1,0 +1,140 @@
+{
+  "building_id": "679091168",
+  "num_facets": 8,
+  "height_m": 10.83,
+  "ground_elevation_m": 132.16,
+  "ridge_elevation_m": 142.99,
+  "facets": [
+    {
+      "facet_id": 1,
+      "pitch_deg": 39.52,
+      "azimuth_deg": 91.8,
+      "area_m2": 96.9,
+      "normal_vector": [
+        -0.636,
+        0.0205,
+        0.7714
+      ],
+      "num_points": 143,
+      "is_flat": false,
+      "eave_elevation_m": 136.59,
+      "plane_rms_m": 0.0483,
+      "confidence": 0.839
+    },
+    {
+      "facet_id": 2,
+      "pitch_deg": 28.59,
+      "azimuth_deg": 180.9,
+      "area_m2": 61.77,
+      "normal_vector": [
+        0.0075,
+        0.4785,
+        0.878
+      ],
+      "num_points": 74,
+      "is_flat": false,
+      "eave_elevation_m": 138.671,
+      "plane_rms_m": 0.0634,
+      "confidence": 0.789
+    },
+    {
+      "facet_id": 3,
+      "pitch_deg": 30.39,
+      "azimuth_deg": 2.5,
+      "area_m2": 47.01,
+      "normal_vector": [
+        -0.0218,
+        -0.5054,
+        0.8626
+      ],
+      "num_points": 69,
+      "is_flat": false,
+      "eave_elevation_m": 138.677,
+      "plane_rms_m": 0.0548,
+      "confidence": 0.817
+    },
+    {
+      "facet_id": 4,
+      "pitch_deg": 38.07,
+      "azimuth_deg": 271.6,
+      "area_m2": 34.94,
+      "normal_vector": [
+        0.6164,
+        -0.0172,
+        0.7872
+      ],
+      "num_points": 60,
+      "is_flat": false,
+      "eave_elevation_m": 140.757,
+      "plane_rms_m": 0.0412,
+      "confidence": 0.863
+    },
+    {
+      "facet_id": 5,
+      "pitch_deg": 28.1,
+      "azimuth_deg": 98.1,
+      "area_m2": 18.46,
+      "normal_vector": [
+        -0.4663,
+        0.0663,
+        0.8821
+      ],
+      "num_points": 45,
+      "is_flat": false,
+      "eave_elevation_m": 138.709,
+      "plane_rms_m": 0.0655,
+      "confidence": 0.782
+    },
+    {
+      "facet_id": 6,
+      "pitch_deg": 1.03,
+      "azimuth_deg": 108.7,
+      "area_m2": 112.33,
+      "normal_vector": [
+        -0.017,
+        0.0058,
+        0.9998
+      ],
+      "num_points": 38,
+      "is_flat": true,
+      "eave_elevation_m": 135.562,
+      "plane_rms_m": 0.0668,
+      "confidence": 0.777
+    },
+    {
+      "facet_id": 7,
+      "pitch_deg": 38.27,
+      "azimuth_deg": 6.8,
+      "area_m2": 12.09,
+      "normal_vector": [
+        -0.0738,
+        -0.615,
+        0.7851
+      ],
+      "num_points": 15,
+      "is_flat": false,
+      "eave_elevation_m": 135.906,
+      "plane_rms_m": 0.0423,
+      "confidence": 0.859
+    },
+    {
+      "facet_id": 8,
+      "pitch_deg": 0.91,
+      "azimuth_deg": 184.1,
+      "area_m2": 136.27,
+      "normal_vector": [
+        0.0011,
+        0.0158,
+        0.9999
+      ],
+      "num_points": 14,
+      "is_flat": true,
+      "eave_elevation_m": 132.046,
+      "plane_rms_m": 0.0804,
+      "confidence": 0.732
+    }
+  ],
+  "eave_height_m": -0.114,
+  "point_density_m2": 2.7,
+  "segmentation_method": "ransac"
+}

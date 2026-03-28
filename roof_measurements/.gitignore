@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Data files (large LiDAR files)
+data/
+cache/
+*.las
+*.laz
+
+# Notebooks output
+notebooks/cache/
+notebooks/*_executed.ipynb
+
+# Pytest
+.pytest_cache/
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
