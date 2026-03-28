@@ -18,6 +18,11 @@ dependencies = [
     "requests>=2.31",
     "laspy[lazrs]>=2.5",
     "pyransac3d>=0.6.0",
+    "pyproj>=3.6",
+    "pyogrio>=0.7",
+    "geopandas>=0.14",
+    "osmnx>=1.9",
+    "plotly>=5.18",
     "folium>=0.19",
     "streamlit-folium>=0.20",
 ]
