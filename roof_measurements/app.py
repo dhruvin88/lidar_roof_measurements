@@ -286,32 +286,61 @@ FACET_COLORS = [
 ]
 
 
-def make_map(polygon_coords, lat, lon):
-    import plotly.graph_objects as go
+_SATELLITE_TILE = (
+    "https://server.arcgisonline.com/ArcGIS/rest/services"
+    "/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+)
+_SATELLITE_ATTR = (
+    "Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics"
+)
 
-    poly_lons = [c[0] for c in polygon_coords]
-    poly_lats = [c[1] for c in polygon_coords]
 
-    fig = go.Figure()
-    fig.add_trace(go.Scattermapbox(
-        lon=poly_lons, lat=poly_lats, fill="toself",
-        fillcolor="rgba(99,179,237,0.35)",
-        line=dict(color="#3182CE", width=2),
-        mode="lines", name="Footprint",
-    ))
-    fig.add_trace(go.Scattermapbox(
-        lon=[lon], lat=[lat],
-        mode="markers",
-        marker=dict(size=12, color="#E53E3E", symbol="circle"),
-        name="Query point",
-    ))
-    fig.update_layout(
-        mapbox=dict(style="open-street-map", center=dict(lat=lat, lon=lon), zoom=18),
-        margin=dict(l=0, r=0, t=0, b=0),
-        height=340,
-        showlegend=False,
-    )
-    return fig
+def make_picker_map(lat: float, lon: float) -> "folium.Map":
+    """Interactive map: click to set lat/lon, satellite layer toggle."""
+    import folium
+
+    m = folium.Map(location=[lat, lon], zoom_start=18, tiles="OpenStreetMap")
+    folium.TileLayer(
+        tiles=_SATELLITE_TILE, attr=_SATELLITE_ATTR,
+        name="Satellite", overlay=False, control=True,
+    ).add_to(m)
+    folium.Marker(
+        [lat, lon],
+        tooltip="Click map to move pin",
+        icon=folium.Icon(color="red", icon="home"),
+    ).add_to(m)
+    folium.LayerControl(position="topright").add_to(m)
+    return m
+
+
+def make_footprint_map(polygon_coords, lat: float, lon: float) -> "folium.Map":
+    """Footprint map shown after analysis — includes satellite layer + polygon."""
+    import folium
+
+    m = folium.Map(location=[lat, lon], zoom_start=18, tiles="OpenStreetMap")
+    folium.TileLayer(
+        tiles=_SATELLITE_TILE, attr=_SATELLITE_ATTR,
+        name="Satellite", overlay=False, control=True,
+    ).add_to(m)
+
+    # Building footprint polygon
+    poly_latlng = [(c[1], c[0]) for c in polygon_coords]
+    folium.Polygon(
+        locations=poly_latlng,
+        color="#3182CE", weight=2,
+        fill=True, fill_color="#63B3ED", fill_opacity=0.3,
+        tooltip="Building footprint",
+    ).add_to(m)
+
+    # Query point
+    folium.Marker(
+        [lat, lon],
+        tooltip=f"Query: {lat:.6f}, {lon:.6f}",
+        icon=folium.Icon(color="red", icon="home"),
+    ).add_to(m)
+
+    folium.LayerControl(position="topright").add_to(m)
+    return m
 
 
 def _facet_boundary_3d(points: np.ndarray, normal: np.ndarray):
@@ -490,12 +519,14 @@ def _render_single_result(data: dict, q_lat: float, q_lon: float) -> None:
 
     col_map, col_3d = st.columns([1, 1])
     with col_map:
+        from streamlit_folium import st_folium as _st_folium
         st.subheader("Building Footprint")
         st.caption(f"EPSG:{data['epsg']} · Tiles: {', '.join(data['tile_names'])}")
-        st.plotly_chart(
-            make_map(data["polygon_coords"], q_lat, q_lon),
+        _st_folium(
+            make_footprint_map(data["polygon_coords"], q_lat, q_lon),
+            height=340,
+            returned_objects=[],
             use_container_width=True,
-            config={"scrollZoom": True},
         )
     with col_3d:
         st.subheader("3D Roof Facets")
@@ -666,8 +697,30 @@ opts = dict(
 tab_single, tab_batch = st.tabs(["📍 Single Building", "📋 Batch"])
 
 with tab_single:
+    from streamlit_folium import st_folium
+
+    # Interactive location picker — always visible, click to set lat/lon
+    st.subheader("📍 Pick Location")
+    st.caption("Click anywhere on the map to set the coordinates, then click **▶ Analyze** in the sidebar.")
+    map_data = st_folium(
+        make_picker_map(lat, lon),
+        height=360,
+        returned_objects=["last_clicked"],
+        key=f"picker_{lat}_{lon}",
+        use_container_width=True,
+    )
+    if map_data and map_data.get("last_clicked"):
+        clicked = map_data["last_clicked"]
+        # Only rerun if the click is meaningfully different from current coords
+        if abs(clicked["lat"] - lat) > 1e-6 or abs(clicked["lng"] - lon) > 1e-6:
+            st.session_state["pending_lat"] = clicked["lat"]
+            st.session_state["pending_lon"] = clicked["lng"]
+            st.rerun()
+
+    st.divider()
+
     if not run:
-        st.info("Enter a latitude and longitude in the sidebar, then click **▶ Analyze**.")
+        st.info("Click the map to set a location, or enter coordinates in the sidebar, then click **▶ Analyze**.")
     else:
         try:
             with st.status("Running analysis…", expanded=True) as status:

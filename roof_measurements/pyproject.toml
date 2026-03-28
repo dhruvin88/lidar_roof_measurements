@@ -18,6 +18,8 @@ dependencies = [
     "click>=8.1",
     "requests>=2.31",
     "CSF>=1.0.1",
+    "folium>=0.19",
+    "streamlit-folium>=0.20",
 ]
 
 [project.scripts]
