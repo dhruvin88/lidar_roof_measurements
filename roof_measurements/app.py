@@ -18,21 +18,16 @@ from roof_measurements.export import build_single_building_geojson
 from roof_measurements.features import (
     _delaunay_alpha_kept,
     _project_to_plane,
-    classify_roof_type,
-    compute_continuity,
-    compute_facet,
-    compute_height,
     detect_roof_obstacles,
     estimate_ground_elevation,
     estimate_point_density,
-    facet_solar_irradiance,
     filter_below_eave,
     filter_radius_outliers,
     filter_subground_points,
-    merge_coplanar_facets,
 )
 from roof_measurements.footprints import footprint_at_point
 from roof_measurements.models import BuildingResult, FacetResult
+from roof_measurements.pipeline import assemble_result
 from roof_measurements.segmentation import segment_planes
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -250,70 +245,23 @@ def run_pipeline(
             "Check the address or adjust the options."
         )
 
-    # Merge RANSAC fragments belonging to the same physical plane
-    facet_point_lists = merge_coplanar_facets(facet_point_lists)
+    density = estimate_point_density(clipped)
+    result, facet_point_lists = assemble_result(
+        osm_id, facet_point_lists, clipped, ground_z, density, method,
+        min_confidence, max_pitch_deg, lat,
+    )
 
-    facets = [compute_facet(i + 1, pts) for i, pts in enumerate(facet_point_lists)]
-
-    n_before = len(facets)
-    kept = [
-        (f, pts) for f, pts in zip(facets, facet_point_lists)
-        if f.confidence >= min_confidence and f.pitch_deg <= max_pitch_deg
-    ]
-    if not kept:
-        raise ValueError(
-            f"No facets survived quality filters (min_confidence={min_confidence:.2f}, "
-            f"max_pitch={max_pitch_deg:.0f}°) — try relaxing the thresholds."
-        )
-    if len(kept) < n_before:
-        facets = [f.model_copy(update={"facet_id": i + 1}) for i, (f, _) in enumerate(kept)]
-        facet_point_lists = [pts for _, pts in kept]
-
-    # Solar potential (ASHRAE clear-sky, uses lat from run_pipeline parameter)
-    solar_facets = []
-    for f in facets:
-        kwh, suit = facet_solar_irradiance(f.pitch_deg, f.azimuth_deg, lat)
-        solar_facets.append(f.model_copy(update={"solar_kwh_m2_yr": kwh, "solar_suitability": suit}))
-    facets = solar_facets
-    total_solar_kwh_yr = round(sum(f.solar_kwh_m2_yr * f.area_m2 for f in facets), 1)  # type: ignore[operator]
-
-    all_roof = np.vstack(facet_point_lists)
-
-    # Points that survived all filters but weren't assigned to any facet
+    # Points not assigned to any facet — used for obstacle detection and viz
     from scipy.spatial import cKDTree
+    all_roof = np.vstack(facet_point_lists)
     _tree = cKDTree(all_roof)
     _dists, _ = _tree.query(clipped, k=1)
     unassigned_pts = clipped[_dists > 1e-4]
 
     # Obstacle detection from unassigned point clusters
     obstacles = detect_roof_obstacles(unassigned_pts, facet_point_lists)
-
-    height_m, ridge_elev = compute_height(all_roof, ground_z)
-    eave_height_m = max(0.0, round(min(f.eave_elevation_m for f in facets) - ground_z, 3))
-    density = estimate_point_density(clipped)
-    total_roof_area_m2 = round(sum(f.area_m2 for f in facets), 2)
-    roof_type = classify_roof_type(facets)
-    continuity = compute_continuity(facet_point_lists, clipped)
-
-    result = BuildingResult(
-        building_id=osm_id,
-        num_facets=len(facets),
-        height_m=height_m,
-        eave_height_m=eave_height_m,
-        ground_elevation_m=round(ground_z, 3),
-        ridge_elevation_m=ridge_elev,
-        facets=facets,
-        point_density_m2=density,
-        segmentation_method=method,
-        unassigned_point_fraction=continuity["unassigned_point_fraction"],
-        is_facets_connected=continuity["is_connected"],
-        num_facet_components=continuity["num_components"],
-        isolated_facet_ids=continuity["isolated_facet_ids"],
-        total_roof_area_m2=total_roof_area_m2,
-        roof_type=roof_type,
-        total_solar_kwh_yr=total_solar_kwh_yr,
-        obstacles=obstacles,
-    )
+    if obstacles:
+        result = result.model_copy(update={"obstacles": obstacles})
 
     return {
         "result": result,

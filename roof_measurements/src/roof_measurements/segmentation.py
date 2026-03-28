@@ -113,16 +113,30 @@ def _ransac_segment(
 
 
 def _estimate_normals_pca(points: np.ndarray, nn_idx: np.ndarray) -> np.ndarray:
-    """Estimate per-point normals via PCA on k nearest neighbours."""
-    normals = np.zeros_like(points)
-    for i, neighbors in enumerate(nn_idx):
-        neighbours_pts = points[neighbors]
-        centred = neighbours_pts - neighbours_pts.mean(axis=0)
-        _, _, vt = np.linalg.svd(centred, full_matrices=False)
-        n = vt[-1]
-        if n[2] < 0:
-            n = -n
-        normals[i] = n / np.linalg.norm(n)
+    """Estimate per-point normals via PCA on k nearest neighbours.
+
+    Uses batched 3x3 covariance matrices + eigh instead of per-point SVD
+    to avoid Python-loop overhead on large point clouds.
+    """
+    # (N, k, 3) neighbourhoods, centred per-point
+    nbr_pts = points[nn_idx]                          # (N, k, 3)
+    centred = nbr_pts - nbr_pts.mean(axis=1, keepdims=True)  # (N, k, 3)
+
+    # Batched 3×3 covariance: C_i = centred_i^T @ centred_i
+    cov = np.einsum("nki,nkj->nij", centred, centred)  # (N, 3, 3)
+
+    # Smallest eigenvector of each covariance = plane normal
+    eigenvalues, eigenvectors = np.linalg.eigh(cov)     # sorted ascending
+    normals = eigenvectors[:, :, 0]                     # (N, 3) — smallest eigenvalue
+
+    # Orient upward (z > 0)
+    flip = normals[:, 2] < 0
+    normals[flip] *= -1
+
+    # Normalise
+    norms = np.linalg.norm(normals, axis=1, keepdims=True)
+    norms = np.maximum(norms, 1e-12)
+    normals /= norms
 
     return normals
 

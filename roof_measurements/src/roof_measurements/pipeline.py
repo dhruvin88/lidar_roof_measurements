@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _LOW_DENSITY_THRESHOLD = 4.0  # pts/m²
 
 
-def _assemble_result(
+def assemble_result(
     building_id: str,
     facet_point_lists: list[np.ndarray],
     all_building_points: np.ndarray,
@@ -39,8 +39,12 @@ def _assemble_result(
     min_confidence: float = 0.0,
     max_pitch_deg: float = 70.0,
     lat: float | None = None,
-) -> BuildingResult:
-    """Shared assembly step used by both process_building and process_file."""
+) -> tuple[BuildingResult, list[np.ndarray]]:
+    """Merge, filter, and assemble facets into a BuildingResult.
+
+    Returns (result, final_facet_point_lists) — the second element is needed
+    by callers that do 3D visualisation or obstacle detection.
+    """
     # Merge RANSAC fragments that belong to the same physical plane
     facet_point_lists = merge_coplanar_facets(facet_point_lists)
 
@@ -92,7 +96,7 @@ def _assemble_result(
     total_roof_area_m2 = round(sum(f.area_m2 for f in facets), 2)
     roof_type = classify_roof_type(facets)
     continuity = compute_continuity(facet_point_lists, all_building_points)
-    return BuildingResult(
+    result = BuildingResult(
         building_id=building_id,
         num_facets=len(facets),
         height_m=height_m,
@@ -110,6 +114,7 @@ def _assemble_result(
         roof_type=roof_type,
         total_solar_kwh_yr=total_solar_kwh_yr,
     )
+    return result, facet_point_lists
 
 
 def _preprocess_and_segment(
@@ -194,7 +199,8 @@ def process_building(
         building_id, points, ground_z, distance_threshold,
         min_facet_area_m2, min_facet_points, max_planes,
     )
-    return _assemble_result(building_id, facet_point_lists, points, ground_z, density, method, min_confidence, max_pitch_deg, lat)
+    result, _ = assemble_result(building_id, facet_point_lists, points, ground_z, density, method, min_confidence, max_pitch_deg, lat)
+    return result
 
 
 def process_file(
@@ -232,4 +238,5 @@ def process_file(
         building_id, points, ground_z, distance_threshold,
         min_facet_area_m2, min_facet_points, max_planes,
     )
-    return _assemble_result(building_id, facet_point_lists, points, ground_z, density, method, min_confidence, max_pitch_deg, lat)
+    result, _ = assemble_result(building_id, facet_point_lists, points, ground_z, density, method, min_confidence, max_pitch_deg, lat)
+    return result
