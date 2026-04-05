@@ -14,8 +14,10 @@ from roof_measurements.features import (
     compute_height,
     estimate_point_density,
     facet_solar_irradiance,
+    filter_above_surface_outliers,
     filter_below_eave,
     filter_isolated_facets,
+    filter_near_vertical_points,
     filter_radius_outliers,
     filter_subground_points,
     merge_coplanar_facets,
@@ -29,6 +31,10 @@ logger = logging.getLogger(__name__)
 _LOW_DENSITY_THRESHOLD = 4.0  # pts/m²
 
 
+_HIGH_UNASSIGNED_FRACTION = 0.40   # flag when > 40 % of points unassigned
+_LOW_CONFIDENCE_THRESHOLD = 0.50   # flag when any facet confidence < this
+
+
 def assemble_result(
     building_id: str,
     facet_point_lists: list[np.ndarray],
@@ -39,6 +45,7 @@ def assemble_result(
     min_confidence: float = 0.0,
     max_pitch_deg: float = 70.0,
     lat: float | None = None,
+    quality_flags: list[str] | None = None,
 ) -> tuple[BuildingResult, list[np.ndarray]]:
     """Merge, filter, and assemble facets into a BuildingResult.
 
@@ -96,6 +103,31 @@ def assemble_result(
     total_roof_area_m2 = round(sum(f.area_m2 for f in facets), 2)
     roof_type = classify_roof_type(facets)
     continuity = compute_continuity(facet_point_lists, all_building_points)
+    flags: list[str] = list(quality_flags or [])
+
+    # Post-assembly quality checks
+    if continuity["unassigned_point_fraction"] > _HIGH_UNASSIGNED_FRACTION:
+        flags.append("high_unassigned_fraction")
+        logger.warning(
+            "Building %s: %.0f%% of points unassigned to any facet — "
+            "possible complex geometry or data quality issue.",
+            building_id, continuity["unassigned_point_fraction"] * 100,
+        )
+
+    if not continuity["is_connected"]:
+        flags.append("fragmented_segmentation")
+        logger.warning(
+            "Building %s: facets form %d disconnected component(s).",
+            building_id, continuity["num_components"],
+        )
+
+    if any(f.confidence < _LOW_CONFIDENCE_THRESHOLD for f in facets):
+        flags.append("low_confidence_facets")
+        logger.warning(
+            "Building %s: one or more facets have planarity confidence < %.2f.",
+            building_id, _LOW_CONFIDENCE_THRESHOLD,
+        )
+
     result = BuildingResult(
         building_id=building_id,
         num_facets=len(facets),
@@ -113,6 +145,7 @@ def assemble_result(
         total_roof_area_m2=total_roof_area_m2,
         roof_type=roof_type,
         total_solar_kwh_yr=total_solar_kwh_yr,
+        lidar_quality_flags=flags,
     )
     return result, facet_point_lists
 
@@ -125,11 +158,21 @@ def _preprocess_and_segment(
     min_facet_area_m2: float,
     min_facet_points: int,
     max_planes: int,
-) -> tuple[np.ndarray, list[np.ndarray], str, float]:
+) -> tuple[np.ndarray, list[np.ndarray], str, float, list[str]]:
     """Shared preprocessing: filter → density → segment.
 
-    Returns (filtered_points, facet_point_lists, method, density).
+    Returns (filtered_points, facet_point_lists, method, density, quality_flags).
+
+    Filtering order
+    ---------------
+    1. filter_subground_points  — remove misclassified points below ground
+    2. filter_radius_outliers   — remove isolated noise clusters (trees, vehicles)
+    3. filter_below_eave        — remove wall points below the eave line
+    4. filter_above_surface_outliers — remove multipath/ghost returns above roof
+    5. filter_near_vertical_points  — remove residual wall/parapet returns
     """
+    quality_flags: list[str] = []
+
     if len(points) == 0:
         raise ValueError(f"Building {building_id!r}: empty point array")
 
@@ -141,10 +184,32 @@ def _preprocess_and_segment(
     if len(points) == 0:
         raise ValueError(f"Building {building_id!r}: no points remain after outlier filtering")
 
+    n_before_eave = len(points)
     points = filter_below_eave(points, ground_z)
+    eave_removed = n_before_eave - len(points)
+
+    # ── LiDAR artefact filters ────────────────────────────────────────────────
+    n_before = len(points)
+    points = filter_above_surface_outliers(points)
+    if len(points) < n_before:
+        quality_flags.append("phantom_points_removed")
+    if len(points) == 0:
+        raise ValueError(f"Building {building_id!r}: no points remain after above-surface outlier filtering")
+
+    # Only run the PCA-based near-vertical filter when filter_below_eave
+    # actually removed wall points — if it removed nothing the cloud is already
+    # clean and the O(N·k) PCA computation is wasted.
+    if eave_removed > 0:
+        n_before = len(points)
+        points = filter_near_vertical_points(points)
+        if len(points) < n_before:
+            quality_flags.append("near_vertical_points_removed")
+        if len(points) == 0:
+            raise ValueError(f"Building {building_id!r}: no points remain after near-vertical filtering")
 
     density = estimate_point_density(points)
     if density < _LOW_DENSITY_THRESHOLD:
+        quality_flags.append("low_density")
         logger.warning(
             "Building %s: low point density (%.1f pts/m²) — accuracy may be reduced.",
             building_id, density,
@@ -164,7 +229,7 @@ def _preprocess_and_segment(
             "try lowering min_facet_area_m2 or min_facet_points."
         )
 
-    return points, facet_point_lists, method, density
+    return points, facet_point_lists, method, density, quality_flags
 
 
 def process_building(
@@ -195,11 +260,14 @@ def process_building(
     distance_threshold, min_facet_area_m2, max_planes :
         Forwarded to :func:`segment_planes`.
     """
-    points, facet_point_lists, method, density = _preprocess_and_segment(
+    points, facet_point_lists, method, density, quality_flags = _preprocess_and_segment(
         building_id, points, ground_z, distance_threshold,
         min_facet_area_m2, min_facet_points, max_planes,
     )
-    result, _ = assemble_result(building_id, facet_point_lists, points, ground_z, density, method, min_confidence, max_pitch_deg, lat)
+    result, _ = assemble_result(
+        building_id, facet_point_lists, points, ground_z, density, method,
+        min_confidence, max_pitch_deg, lat, quality_flags,
+    )
     return result
 
 
@@ -234,9 +302,12 @@ def process_file(
 
     points, ground_z = load_building_points(path)
 
-    points, facet_point_lists, method, density = _preprocess_and_segment(
+    points, facet_point_lists, method, density, quality_flags = _preprocess_and_segment(
         building_id, points, ground_z, distance_threshold,
         min_facet_area_m2, min_facet_points, max_planes,
     )
-    result, _ = assemble_result(building_id, facet_point_lists, points, ground_z, density, method, min_confidence, max_pitch_deg, lat)
+    result, _ = assemble_result(
+        building_id, facet_point_lists, points, ground_z, density, method,
+        min_confidence, max_pitch_deg, lat, quality_flags,
+    )
     return result

@@ -76,8 +76,8 @@ def main() -> None:
     # ── Per-building loop ─────────────────────────────────────────────────────
     results, skipped = [], 0
     print()
-    print(f"{'Building':16s}  {'Facets':>6}  {'H (m)':>7}  {'Eave (m)':>8}  {'Pitch°':>7}  {'Conf':>5}  Method")
-    print("-" * 78)
+    print(f"{'Building':16s}  {'Facets':>6}  {'H (m)':>7}  {'Eave (m)':>8}  {'Pitch°':>7}  {'Conf':>5}  Method  Flags")
+    print("-" * 100)
 
     for bldg_id, xyz, ground_z in iter_building_point_clouds(
         las_path, epsg=args.epsg, min_points=args.min_points
@@ -98,9 +98,11 @@ def main() -> None:
 
         mean_pitch = sum(f.pitch_deg for f in r.facets) / r.num_facets
         mean_conf  = sum(f.confidence  for f in r.facets) / r.num_facets
+        flags_str  = ",".join(r.lidar_quality_flags) if r.lidar_quality_flags else "—"
         print(
             f"  {bldg_id:14s}  {r.num_facets:6d}  {r.height_m:7.2f}  "
-            f"{r.eave_height_m:8.2f}  {mean_pitch:7.1f}  {mean_conf:5.2f}  {r.segmentation_method}"
+            f"{r.eave_height_m:8.2f}  {mean_pitch:7.1f}  {mean_conf:5.2f}  "
+            f"{r.segmentation_method}  {flags_str}"
         )
 
         # Save individual JSON
@@ -111,7 +113,7 @@ def main() -> None:
             print(f"\n[--max-buildings {args.max_buildings} reached, stopping early]")
             break
 
-    print("-" * 78)
+    print("-" * 100)
     print(f"\nProcessed {len(results)} building(s), {skipped} skipped.")
 
     if not results:

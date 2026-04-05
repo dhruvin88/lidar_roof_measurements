@@ -156,6 +156,9 @@ def results_to_geodataframe(
         - **ridge_elevation_m**
         - **point_density_m2**
         - **segmentation_method**
+        - **roof_type**
+        - **total_solar_kwh_yr** — None if latitude not provided
+        - **lidar_quality_flags** — pipe-delimited string of flag names (empty if clean)
     """
     import geopandas as gpd
     import pandas as pd
@@ -172,6 +175,7 @@ def results_to_geodataframe(
             mean_pitch = max_pitch = min_pitch = None
         row: dict = {
             "building_id": r.building_id,
+            "roof_type": r.roof_type,
             "num_facets": r.num_facets,
             "height_m": r.height_m,
             "eave_height_m": r.eave_height_m,
@@ -179,10 +183,12 @@ def results_to_geodataframe(
             "max_pitch_deg": max_pitch,
             "min_pitch_deg": min_pitch,
             "total_roof_area_m2": round(sum(f.area_m2 for f in r.facets), 2),
+            "total_solar_kwh_yr": r.total_solar_kwh_yr,
             "ground_elevation_m": r.ground_elevation_m,
             "ridge_elevation_m": r.ridge_elevation_m,
             "point_density_m2": r.point_density_m2,
             "segmentation_method": r.segmentation_method,
+            "lidar_quality_flags": "|".join(r.lidar_quality_flags) if r.lidar_quality_flags else "",
         }
         rows.append(row)
 

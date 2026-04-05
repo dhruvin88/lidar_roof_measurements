@@ -21,7 +21,9 @@ from roof_measurements.features import (
     detect_roof_obstacles,
     estimate_ground_elevation,
     estimate_point_density,
+    filter_above_surface_outliers,
     filter_below_eave,
+    filter_near_vertical_points,
     filter_radius_outliers,
     filter_subground_points,
 )
@@ -218,7 +220,27 @@ def run_pipeline(
         raise ValueError("Too few points remain after outlier filtering.")
 
     # Remove wall points below the estimated eave line
+    quality_flags: list[str] = []
+    n_before_eave = len(clipped)
     clipped = filter_below_eave(clipped, ground_z)
+    eave_removed = n_before_eave - len(clipped)
+
+    # Remove multipath/ghost returns above the roof surface
+    n_before = len(clipped)
+    clipped = filter_above_surface_outliers(clipped)
+    if len(clipped) < n_before:
+        quality_flags.append("phantom_points_removed")
+    if len(clipped) < 10:
+        raise ValueError("Too few points remain after above-surface outlier filtering.")
+
+    # Remove residual wall/parapet returns (only when eave filter found wall points)
+    if eave_removed > 0:
+        n_before = len(clipped)
+        clipped = filter_near_vertical_points(clipped)
+        if len(clipped) < n_before:
+            quality_flags.append("near_vertical_points_removed")
+        if len(clipped) < 10:
+            raise ValueError("Too few points remain after near-vertical filtering.")
 
     # 4. Segment + features (keep facet_point_lists for 3D viz)
     facet_point_lists, method = segment_planes(
@@ -248,7 +270,7 @@ def run_pipeline(
     density = estimate_point_density(clipped)
     result, facet_point_lists = assemble_result(
         osm_id, facet_point_lists, clipped, ground_z, density, method,
-        min_confidence, max_pitch_deg, lat,
+        min_confidence, max_pitch_deg, lat, quality_flags,
     )
 
     # Points not assigned to any facet — used for obstacle detection and viz
@@ -515,6 +537,27 @@ def _render_single_result(data: dict, q_lat: float, q_lon: float) -> None:
         ids_str = ", ".join(f"F{i}" for i in result.isolated_facet_ids)
         st.warning(f"⚠️ Isolated facets (no adjacent neighbours): **{ids_str}**")
 
+    _FLAG_LABELS = {
+        "phantom_points_removed":      ("ℹ️", "info",    "Multipath/ghost returns detected above the roof surface — removed before segmentation."),
+        "near_vertical_points_removed":("ℹ️", "info",    "Residual wall/parapet returns removed before RANSAC to protect plane budget."),
+        "low_density":                 ("⚠️", "warning", "Low point density (< 4 pts/m²) — measurement accuracy may be reduced."),
+        "high_unassigned_fraction":    ("⚠️", "warning", "More than 40% of building points were not assigned to any facet — possible complex geometry."),
+        "fragmented_segmentation":     ("⚠️", "warning", "Facets form multiple disconnected groups (already shown above)."),
+        "low_confidence_facets":       ("⚠️", "warning", "One or more facets have low planarity confidence (< 0.50)."),
+    }
+    info_flags = [f for f in result.lidar_quality_flags if _FLAG_LABELS.get(f, ("", "info", ""))[1] == "info"]
+    warn_flags = [f for f in result.lidar_quality_flags
+                  if _FLAG_LABELS.get(f, ("", "warning", ""))[1] == "warning"
+                  and f not in ("fragmented_segmentation", "high_unassigned_fraction")]  # already shown above
+    if info_flags:
+        with st.expander("ℹ️ Data quality — filters applied", expanded=False):
+            for flag in info_flags:
+                icon, _, msg = _FLAG_LABELS.get(flag, ("ℹ️", "info", flag))
+                st.caption(f"{icon} {msg}")
+    for flag in warn_flags:
+        icon, _, msg = _FLAG_LABELS.get(flag, ("⚠️", "warning", flag))
+        st.warning(f"{icon} {msg}")
+
     st.divider()
 
     col_map, col_3d = st.columns([1, 1])
@@ -646,7 +689,7 @@ def _render_batch_tab(opts: dict) -> None:
             "height_m": None, "eave_height_m": None,
             "total_roof_area_m2": None, "total_solar_kwh_yr": None,
             "point_density_m2": None, "unassigned_point_fraction": None,
-            "error": None,
+            "quality_flags": None, "error": None,
         }
         try:
             g_lat, g_lon, _ = geocode_address(addr)
@@ -669,6 +712,7 @@ def _render_batch_tab(opts: dict) -> None:
                 "total_solar_kwh_yr":     r.total_solar_kwh_yr,
                 "point_density_m2":       r.point_density_m2,
                 "unassigned_point_fraction": r.unassigned_point_fraction,
+                "quality_flags":          "|".join(r.lidar_quality_flags) if r.lidar_quality_flags else "",
             })
         except Exception as exc:
             row["error"] = str(exc)

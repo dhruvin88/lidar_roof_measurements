@@ -93,3 +93,15 @@ class BuildingResult(BaseModel):
         default_factory=list,
         description="Detected roof obstacles (chimneys, vents, HVAC units).",
     )
+    lidar_quality_flags: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Detected LiDAR data quality issues. Possible values: "
+            "'low_density' (< 4 pts/m²), "
+            "'phantom_points_removed' (multipath/ghost returns above surface removed), "
+            "'near_vertical_points_removed' (wall/parapet returns removed pre-RANSAC), "
+            "'high_unassigned_fraction' (> 40 % of building points not assigned to any facet), "
+            "'fragmented_segmentation' (facets form multiple disconnected components), "
+            "'low_confidence_facets' (one or more facets with planarity confidence < 0.5)."
+        ),
+    )

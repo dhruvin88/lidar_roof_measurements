@@ -798,6 +798,132 @@ def detect_roof_obstacles(
 
 
 
+def _local_normals_pca(points: np.ndarray, k: int = 15) -> np.ndarray:
+    """Estimate per-point surface normals via batched PCA on k nearest neighbours.
+
+    Returns (N, 3) unit normals, oriented so Z ≥ 0.
+    Uses the same vectorised approach as the region-growing segmenter to avoid
+    per-point Python loops.
+    """
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(points)
+    _, nn_idx = tree.query(points, k=k + 1)
+    nn_idx = nn_idx[:, 1:]  # exclude self
+
+    nbr_pts = points[nn_idx]                               # (N, k, 3)
+    centred = nbr_pts - nbr_pts.mean(axis=1, keepdims=True)
+
+    cov = np.einsum("nki,nkj->nij", centred, centred)     # (N, 3, 3)
+    _, eigenvectors = np.linalg.eigh(cov)                  # eigenvalues ascending
+    normals = eigenvectors[:, :, 0]                        # smallest eigval → normal
+
+    flip = normals[:, 2] < 0
+    normals[flip] *= -1
+    norms = np.linalg.norm(normals, axis=1, keepdims=True)
+    normals /= np.maximum(norms, 1e-12)
+    return normals
+
+
+def filter_above_surface_outliers(
+    points: np.ndarray,
+    k_neighbors: int = 15,
+    z_sigma_thresh: float = 3.0,
+) -> np.ndarray:
+    """Remove multipath / ghost returns sitting anomalously high above the roof.
+
+    LiDAR multipath returns arise when a pulse reflects off glass, standing
+    water, or solar panels and arrives at the scanner later than expected,
+    producing phantom points 0.3–2 m above the real surface.  These inflate
+    ridge elevation estimates and can cause RANSAC to fit a spurious upper plane.
+
+    Detection: for each point, compare its Z to the median Z of its *k*
+    nearest XY neighbours.  Points more than *z_sigma_thresh* local standard
+    deviations above that neighbourhood median are flagged and removed.
+
+    Parameters
+    ----------
+    k_neighbors :
+        Number of XY neighbours used to estimate the local surface Z.
+    z_sigma_thresh :
+        Outlier threshold in units of local Z standard deviation.  The default
+        3.0 removes clear spikes while leaving valid steep-edge points.
+    """
+    from scipy.spatial import cKDTree
+
+    if len(points) < k_neighbors + 1:
+        return points
+
+    tree = cKDTree(points[:, :2])                          # 2-D search only
+    _, idx = tree.query(points[:, :2], k=k_neighbors + 1)
+    idx = idx[:, 1:]                                       # exclude self
+
+    nbr_z = points[idx, 2]                                # (N, k)
+    local_median = np.median(nbr_z, axis=1)
+    local_std = np.std(nbr_z, axis=1)
+    local_std = np.maximum(local_std, 0.02)               # 2 cm floor — avoids /0 on flat roofs
+
+    z_score = (points[:, 2] - local_median) / local_std
+    mask = z_score <= z_sigma_thresh
+
+    kept = points[mask]
+    n_removed = len(points) - len(kept)
+    if n_removed:
+        logger.debug(
+            "filter_above_surface_outliers: removed %d / %d phantom-return outlier(s)",
+            n_removed, len(points),
+        )
+    return kept
+
+
+def filter_near_vertical_points(
+    points: np.ndarray,
+    k_neighbors: int = 15,
+    max_pitch_deg: float = 75.0,
+) -> np.ndarray:
+    """Remove points whose local neighbourhood is near-vertical (walls, parapets).
+
+    Wall returns that survive :func:`filter_below_eave` — high dormer walls,
+    chimney sides, parapet faces — have estimated surface normals close to
+    horizontal (the surface itself is near-vertical).  When these reach RANSAC
+    they consume plane slots and produce spurious high-pitch facets that the
+    downstream quality filter must discard at the cost of max_planes budget.
+
+    Removing them pre-RANSAC keeps the plane budget for actual roof surfaces.
+
+    Parameters
+    ----------
+    max_pitch_deg :
+        Maximum estimated surface pitch to keep (degrees from horizontal).
+        Default 75° preserves steep-but-valid mansard lower slopes (≈ 60°)
+        while removing obvious walls and parapet faces (≈ 85–90°).
+    """
+    if len(points) < k_neighbors + 1:
+        return points
+
+    normals = _local_normals_pca(points, k=k_neighbors)
+    nz = np.clip(np.abs(normals[:, 2]), 0.0, 1.0)
+    pitch = np.degrees(np.arccos(nz))
+
+    mask = pitch <= max_pitch_deg
+    kept = points[mask]
+    n_removed = len(points) - len(kept)
+    if n_removed:
+        logger.debug(
+            "filter_near_vertical_points: removed %d / %d near-vertical points (pitch > %.0f°)",
+            n_removed, len(points), max_pitch_deg,
+        )
+    # Safety: never discard everything (would leave nothing for RANSAC)
+    if len(kept) < 10:
+        logger.warning(
+            "filter_near_vertical_points: safety fallback — returning all %d points "
+            "(near-vertical filter would have left < 10 points)",
+            len(points),
+        )
+        return points
+    return kept
+
+
 def estimate_point_density(points: np.ndarray) -> float:
     """Estimate pts/m² using total XY bounding box area as denominator."""
     if len(points) < 3:
